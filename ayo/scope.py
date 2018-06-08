@@ -8,6 +8,8 @@ import threading
 
 import asyncio
 
+from typing import Union
+
 
 class ScopedTaskFactory:  # pylint: disable=too-few-public-methods
     """ TaskFactory that ensure created tasks are attached to the scope """
@@ -82,6 +84,10 @@ class Scope:
         loop = self.loop or asyncio.get_event_loop()
         task = self.awaitables[awaitable] = asyncio.ensure_future(awaitable, loop=loop)
         return task
+
+    def sleep(self, seconds: Union[int, float]) -> asyncio.Task:
+        """ Alias to asyncio.sleep, but executed in the scope """
+        return self.asap(asyncio.sleep(seconds))
 
     async def begin(self):
         """ Set itself as the current scope """

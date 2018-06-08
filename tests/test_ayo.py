@@ -72,7 +72,7 @@ def test_ayo_sleep(timer):
 
     @ayoc.run_with_main()
     async def main(run):
-        await ayo.sleep(3)
+        await run.sleep(3)
 
     assert timer.has_almost_elapsed(3)
 
