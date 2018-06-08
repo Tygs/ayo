@@ -1,3 +1,8 @@
+# WARNING
+
+This project is empty. Don't try it
+
+
 # ayo: High level API for asyncio that integrates well with non ayo code
 
 Ayo let you focus on using asyncio instead of dealing with it. It has shortcuts for common operations, and offer sane tools to do the complicated things. The default behavior is to do most boiler plate for you, but you can opt out of anything you want, and take back control, or delegate control to another code that doesn't use ayo.
