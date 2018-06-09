@@ -51,39 +51,46 @@ To learn about how this works, follow the tutorial.
 
 To learn about how you can still use regular asyncio code, opt out of the autorun, use an already running even loop or get the ayo event loop back, read the dedicated part of the documentation.
 
-## Scope (aka Trio's nursery)
+## Execution scope (aka Trio's nursery)
+
+Execution scopes are a tool to give you garanties about you concurrent tasks:
 
 ```python
-async with ayo.scope(max_concurrency=50, timeout=5) as run:
-    for stuff in stuff_to_do:
-        run << stuff() # schedule the coroutine for execution
+
+import random
+import asyncio
+
+async def zzz():
+    time = random.randint(0, 15)
+    await asyncio.sleep(time)
+    print(f'Slept for {time} seconds')
+
+async with ayo.scope(max_concurrency=10, timeout=12) as run:
+    for _ in range(20):
+        run << zzz() # schedule the coroutine for execution
 ```
 
-Never more than 50 tasks will be run in parallel in this scope. If an exception is raised, all the tasks in the scope are cancelled, then the exception bubbles out of the `with` block. If not, after 5 seconds, if some tasks are still running, they are cancelled and the `with` block exits.
+Here, no more than 10 tasks will be run in parallel in this scope, which is delimited by the `async with` block. If an exception is raised in any task of this scope, all the tasks in the same scope are cancelled, then the exception bubbles out of the `with` block like in regular Python code. If no exception is raised, after 12 seconds, if some tasks are still running, they are cancelled and the `with` block exits.
 
-Any code *after* the `with` block is guaranteed to happend *only* after all the tasks are completed or cancelled. This is one of the benefits of scopes. To learn more about the scopes, go to the dedicated part of documentation.
+Any code *after* the `with` block is guaranteed to happend *only* after all the tasks are completed or cancelled. This is one of the benefits of execution scopes. To learn more about the execution scopes, go to the dedicated part of documentation.
 
 ayo also comes with a lot of short hands. Here you can see `run << stuff()` which is just syntaxic sugar for `run.asap(stuff())`. And `run.asap(stuff())` is nothing more than a safer version of `asyncio.ensure_future(stuff())` restricted to the current scope.
 
 ## Shorthands
 
-The previous example is a common straightforward case, and so we provide a shorthand for it:
+The running a bunch of task is a common case, and so we provide a shorter way to express it:
 
 ```python
-    await ayo.all(*stuff_to_do, max_concurrency=50, timeout=5)
+async with ayo.scope() as run:
+    run.all(zzz(), zzz(), zzz())
 ```
+ayo provides other similar shorthands:
 
-`ayo.all()` is similar to `asyncio.gather()`, but offers the guaranty of running in a scope. It also *optionnally* allows to limit the concurrency and to provide a timeout.
-
-The lib provides other similar shortcuts:
-
-- `ayo.map()`: like `map()`, but with coroutines that you run in a scope
-- `ayo.starmap()`: like `itertools.starmap()`, but with coroutines that you run in a scope
-- `ayo.funcmap()`: like `ayo.all(*(coro(param) for coro in coroutines))`
-- `ayo.starfuncmap()`: like `ayo.all(*(coro(*param) for coro in coroutines))`
-- `ayo.cancel()`: cancel all tasks in the current scope.
-
-Most of those functions have an equivalent method on scopes, that will bind the tasks to the current scope instead of creating a new one.
+- `.map()`: like `map()`, but with coroutines that you run in a scope
+- `.starmap()`: like `itertools.starmap()`, but with coroutines that you run in a scope
+- `.funcmap()`: like `.all(*(coro(param) for coro in coroutines))`
+- `.starfuncmap()`: like `.all(*(coro(*param) for coro in coroutines))`
+- `.cancel()`: cancel all tasks in the current scope.
 
 Learn more in the dedicated part of the documentation.
 

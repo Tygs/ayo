@@ -8,38 +8,14 @@ import threading
 
 import asyncio
 
-from typing import Union
+from typing import Union, Awaitable, cast
+
+from ayo.utils import TaskList
+
+# TODO: rename scope Async Lifetime Scope
 
 
-class ScopedTaskFactory:  # pylint: disable=too-few-public-methods
-    """ TaskFactory that ensure created tasks are attached to the scope """
-
-    def __init__(self):
-        self.thread_local = threading.local()
-
-    def __call__(self, loop, coro) -> asyncio.Task:
-        """ Create a Task from the coroutine, then attach it to the current scope
-
-            This allows the scope to still track tasks not created
-            using it's infrastructure. E.G: if the user calls
-            asyncio.ensure_future(coro) and never scope.run().
-
-            This uses thread_local to get the current scope for the running
-            thread.
-        """
-        # pylint: disable=W0212
-        task = asyncio.Task(coro, loop=loop)
-        if task._source_traceback:  # type: ignore
-            del task._source_traceback[-1]  # type: ignore
-
-        scope = getattr(self.thread_local, "asyncio_task_scope", None)
-        if scope:
-            # Maybe add a warning here if coro not in the dict already ?
-            scope.awaitables[coro] = task
-        return task
-
-
-class Scope:
+class ExecutionScope:
     """ Attempt at recreating trio.nursery for asyncio """
 
     def __init__(self, loop=None, return_exceptions=False):
@@ -79,21 +55,30 @@ class Scope:
         """ Shortcut for self.assap """
         self.asap(coro)
 
-    def asap(self, awaitable):
+    def asap(self, awaitable: Awaitable) -> asyncio.Task:
         """ Execute the awaitable in the current scope as soon as possible """
         loop = self.loop or asyncio.get_event_loop()
-        task = self.awaitables[awaitable] = asyncio.ensure_future(awaitable, loop=loop)
+        if awaitable in self.awaitables:
+            raise RuntimeError(
+                f"The awaitable 'awaitable' is already scheduled in this scope"
+            )
+        task = cast(asyncio.Task, asyncio.ensure_future(awaitable, loop=loop))
+        self.awaitables[awaitable] = task
         return task
 
     def sleep(self, seconds: Union[int, float]) -> asyncio.Task:
         """ Alias to asyncio.sleep, but executed in the scope """
         return self.asap(asyncio.sleep(seconds))
 
+    def all(self, *awaitables) -> TaskList:
+        """ Schedule all tasks to be run in the current scope"""
+        return TaskList(self.asap(awaitable) for awaitable in awaitables)
+
     async def begin(self):
         """ Set itself as the current scope """
         assert not self.resolved
         factory = asyncio.get_event_loop().get_task_factory()
-        factory.thread_local.asyncio_task_scope = self
+        factory.set_current_scope(self)
         return self
 
     async def resolve(self, cancel=False):
@@ -102,8 +87,9 @@ class Scope:
 
         # Restaure the parent scope as the current scope. Which may
         # may be None, in which case we are out of all scopes.
+
         factory = asyncio.get_event_loop().get_task_factory()
-        factory.thread_local.asyncio_task_scope = self._parent_scope
+        factory.set_current_scope(self._parent_scope)
 
         if not self.awaitables:
             return
@@ -119,3 +105,46 @@ class Scope:
             self._gathering_future.cancel()
 
         return await self._gathering_future
+
+
+class ScopedTaskFactory:  # pylint: disable=too-few-public-methods
+    """ TaskFactory that ensure created tasks are attached to the scope """
+
+    def __init__(self):
+        self.thread_locals = threading.local()
+
+    def get_current_scope(self) -> ExecutionScope:
+        """ Get the current scope for the running thread """
+        return getattr(self.thread_locals, "ayo_execution_scope", None)
+
+    def set_current_scope(self, scope: ExecutionScope) -> ExecutionScope:
+        """ Set the current scope for the running thread """
+        self.thread_locals.ayo_execution_scope = scope
+        return scope
+
+    def __call__(self, loop, coro) -> asyncio.Task:
+        """ Create a Task from the coroutine, then attach it to the current scope
+
+            This allows the scope to still track tasks not created
+            using it's infrastructure. E.G: if the user calls
+            asyncio.ensure_future(coro) and never scope.run().
+
+            This uses thread_local to get the current scope for the running
+            thread.
+        """
+        # pylint: disable=W0212
+        task = asyncio.Task(coro, loop=loop)
+        if task._source_traceback:  # type: ignore
+            del task._source_traceback[-1]  # type: ignore
+
+        scope = self.get_current_scope()
+        if scope:
+            # Maybe add a warning here if coro not in the dict already ?
+            scope.awaitables[coro] = task
+        return task
+
+
+def get_current_scope(loop=None) -> ExecutionScope:
+    """ Return the current scope for the running event loop """
+    loop = loop or asyncio.get_event_loop()
+    return loop.get_task_factory().get_current_scope()
