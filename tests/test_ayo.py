@@ -188,5 +188,8 @@ def test_cancel_scope(count, ayoc):
 
     assert count.value == 1, "One coroutine only has finished"
 
+
 # TODO: TEST cancelling the top task to see if the bottom tasks are
 # cancelled
+
+# TODO: test assertions preventing missuse of scopes

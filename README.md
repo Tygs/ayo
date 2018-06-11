@@ -83,7 +83,7 @@ async with ayo.scope() as run:
     run.all(zzz(), zzz(), zzz())
 ```
 
-And you can cancel all tasks running this scope with by calling `run.cancel()`.
+And you can cancel all tasks running in this scope with by calling `run.cancel()`.
 
 Learn more in the dedicated part of the documentation.
 

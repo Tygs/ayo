@@ -30,11 +30,10 @@ class ExecutionScope:
         EXITED = 2
         CANCELLED = 3
 
-    def __init__(self, name=None, loop=None, return_exceptions=False):
+    def __init__(self, loop=None, return_exceptions=False):
         # Parameters we will pass to gather()
         self.loop = loop
         self.return_exceptions = return_exceptions
-        self.name = name
 
         # All the awaitables we will await in gather()
         self.tasks_to_await = {}
@@ -46,9 +45,6 @@ class ExecutionScope:
 
         # Make sure we use the scope in the proper order of states
         self.state = self.STATE.INIT
-
-        # We'll store result of gather here in resolve()
-        self._gathering_future = None
 
         # To prevent the used of self.cancel() outside of the scope
         self._used_as_context_manager = False
@@ -105,7 +101,7 @@ class ExecutionScope:
     async def exit(self):
         """ Await all awaitables created in the scope or cancel them all  """
         assert self.state == self.STATE.ENTERED, "You can't exit a scope you are not in"
-        self.exited = self.STATE.EXITED
+        self.state = self.STATE.EXITED
 
         self._restore_parent_scope()
 
@@ -117,7 +113,7 @@ class ExecutionScope:
         while self.tasks_to_await:
             # TODO: collecting results
             self.awaited_tasks.update(self.tasks_to_await.values())
-            self._gathering_future = asyncio.gather(
+            tasks = asyncio.gather(
                 *self.tasks_to_await.values(),
                 loop=self.loop,
                 return_exceptions=self.return_exceptions,
@@ -127,7 +123,7 @@ class ExecutionScope:
             # But we empty it before we await the gaher(), since gather()
             # may put new tasks in it.
             self.tasks_to_await.clear()
-            await self._gathering_future
+            await tasks
 
     def _cancel_scope(self):
         assert (
