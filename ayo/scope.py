@@ -8,42 +8,62 @@ import threading
 
 import asyncio
 
+from enum import Enum
+
 from typing import Union, Awaitable, cast
 
 from ayo.utils import TaskList
 
-# TODO: rename scope Async Lifetime Scope
+
+class ExitExecutionScopee(Exception):
+    """Break out of the with statement, cancelling all tasks"""
 
 
 class ExecutionScope:
     """ Attempt at recreating trio.nursery for asyncio """
 
-    def __init__(self, loop=None, return_exceptions=False):
+    class STATE(Enum):
+        """ Scope life cycle """
+
+        INIT = 0
+        ENTERED = 1
+        EXITED = 2
+        CANCELLED = 3
+
+    def __init__(self, name=None, loop=None, return_exceptions=False):
         # Parameters we will pass to gather()
         self.loop = loop
         self.return_exceptions = return_exceptions
+        self.name = name
 
-        # All the awaitable we will awaited in gather()
-        # This is also indirectly filled from ScopedEventLoop.created_task
-        # in case the user by pass the scope infrastructure
-        self.awaitables = {}
+        # All the awaitables we will await in gather()
+        self.tasks_to_await = {}
+        self.awaited_tasks = set()
 
         # We use that to promote the parent scope as the current scope
         # in resolve()
         self._parent_scope = None
 
-        # Make sure the scope can't be used twice
-        self.resolved = False
+        # Make sure we use the scope in the proper order of states
+        self.state = self.STATE.INIT
 
         # We'll store result of gather here in resolve()
         self._gathering_future = None
 
+        # To prevent the used of self.cancel() outside of the scope
+        self._used_as_context_manager = False
+
     async def __aenter__(self):
-        return await self.begin()
+        self._used_as_context_manager = True
+        return await self.enter()
 
     async def __aexit__(self, exc_type, exc, tb):
-        await self.resolve(cancel=bool(exc_type))
-        return False  # No return to propagate the possible exception
+        if exc_type:
+            self._cancel_scope()
+        else:
+            await self.exit()
+
+        return exc_type == ExitExecutionScopee
 
     def __enter__(self):
         raise TypeError('You must use "async with" on scopes, not just "with"')
@@ -58,12 +78,12 @@ class ExecutionScope:
     def asap(self, awaitable: Awaitable) -> asyncio.Task:
         """ Execute the awaitable in the current scope as soon as possible """
         loop = self.loop or asyncio.get_event_loop()
-        if awaitable in self.awaitables:
+        if awaitable in self.tasks_to_await:
             raise RuntimeError(
                 f"The awaitable 'awaitable' is already scheduled in this scope"
             )
         task = cast(asyncio.Task, asyncio.ensure_future(awaitable, loop=loop))
-        self.awaitables[awaitable] = task
+        self.tasks_to_await[awaitable] = task
         return task
 
     def sleep(self, seconds: Union[int, float]) -> asyncio.Task:
@@ -74,37 +94,74 @@ class ExecutionScope:
         """ Schedule all tasks to be run in the current scope"""
         return TaskList(self.asap(awaitable) for awaitable in awaitables)
 
-    async def begin(self):
+    async def enter(self):
         """ Set itself as the current scope """
-        assert not self.resolved
+        assert self.state == self.STATE.INIT, "You can't enter a scope twice"
         factory = asyncio.get_event_loop().get_task_factory()
         factory.set_current_scope(self)
+        self.state = self.STATE.ENTERED
         return self
 
-    async def resolve(self, cancel=False):
+    async def exit(self):
         """ Await all awaitables created in the scope or cancel them all  """
-        self.resolved = True
+        assert self.state == self.STATE.ENTERED, "You can't exit a scope you are not in"
+        self.exited = self.STATE.EXITED
 
-        # Restaure the parent scope as the current scope. Which may
-        # may be None, in which case we are out of all scopes.
+        self._restore_parent_scope()
 
+        if not self.tasks_to_await:
+            return
+
+        # Await all submitted tasks. The tasks may themself submit more
+        # task, so we do it in a loop to exhaust all potential nested tasks
+        while self.tasks_to_await:
+            # TODO: collecting results
+            self.awaited_tasks.update(self.tasks_to_await.values())
+            self._gathering_future = asyncio.gather(
+                *self.tasks_to_await.values(),
+                loop=self.loop,
+                return_exceptions=self.return_exceptions,
+            )
+            # We empty the dict of tasks to await after gather() has a
+            # reference on them otherwise it will have nothing to work on.
+            # But we empty it before we await the gaher(), since gather()
+            # may put new tasks in it.
+            self.tasks_to_await.clear()
+            await self._gathering_future
+
+    def _cancel_scope(self):
+        assert (
+            self.state == self.STATE.ENTERED
+        ), "You can't cancel a scope you are not in"
+        self._restore_parent_scope()
+        for awaitable in self.tasks_to_await.values():
+            awaitable.cancel()
+        self.state = self.STATE.CANCELLED
+
+    def _restore_parent_scope(self):
+        """ Restaure the parent scope as the current scope.
+
+            It may be None, in which case we are out of all scopes.
+        """
         factory = asyncio.get_event_loop().get_task_factory()
         factory.set_current_scope(self._parent_scope)
 
-        if not self.awaitables:
-            return
+    def cancel(self):
+        """ Exit the scope `with` block, cancelling all the tasks
 
-        # Group all tasks so we can await them together
-        self._gathering_future = asyncio.gather(
-            *self.awaitables.values(),
-            loop=self.loop,
-            return_exceptions=self.return_exceptions,
-        )
+            Only to be used inside the `with` block. If you call
+            `enter()` and `exit()` manually, you should use
+            `exit(cancel=True)`.
+        """
+        assert (
+            self._used_as_context_manager
+        ), "You can't call cancel() outside a `with` block"
+        raise ExitExecutionScopee
 
-        if cancel:
-            self._gathering_future.cancel()
-
-        return await self._gathering_future
+    @property
+    def cancelled(self):
+        """ Has the scope being cancelled """
+        return self.state == self.STATE.CANCELLED
 
 
 class ScopedTaskFactory:  # pylint: disable=too-few-public-methods
@@ -137,10 +194,13 @@ class ScopedTaskFactory:  # pylint: disable=too-few-public-methods
         if task._source_traceback:  # type: ignore
             del task._source_traceback[-1]  # type: ignore
 
-        scope = self.get_current_scope()
-        if scope:
-            # Maybe add a warning here if coro not in the dict already ?
-            scope.awaitables[coro] = task
+        # scope = self.get_current_scope()
+        # TODO: task tracking to warn if we ensure_future() without
+        # a scope
+        # TODO: capture_orphan_tasks option on scope
+        # if scope:
+        #     # Maybe add a warning here if coro not in the dict already ?
+        #     scope.tasks_to_await[coro] = task
         return task
 
 

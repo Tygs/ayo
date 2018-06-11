@@ -18,4 +18,3 @@ class TaskList(list):
     # async def as_completed(self):
     #     for task in asyncio.as_completed(self.tasks):
     #         yield (await task)
-

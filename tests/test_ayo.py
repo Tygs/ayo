@@ -79,7 +79,7 @@ def test_context_run_with_main(count, ayoc):
         assert isinstance(run, ExecutionScope)
         count()
 
-    assert count()
+    assert count(), "The main() coroutine is called"
 
 
 def test_ayo_sleep(timer, ayoc):
@@ -89,7 +89,7 @@ def test_ayo_sleep(timer, ayoc):
     async def main(run):
         await run.sleep(3)
 
-    assert timer.has_almost_elapsed(3)
+    assert timer.has_almost_elapsed(3), "Sleep does make the code wait"
 
 
 def test_forgetting_async_with_on_scope_raises_exception():
@@ -113,7 +113,7 @@ def test_asap(count, ayoc):
         run.asap(foo())
         run.asap(foo())
 
-    assert count == 2
+    assert count == 2, "All coroutines have been called exactly once"
 
 
 def test_asap_shortcut(count, ayoc):
@@ -127,7 +127,7 @@ def test_asap_shortcut(count, ayoc):
         run << foo()
         run << foo()
 
-    assert count == 2
+    assert count == 2, "All coroutines have been called exactly once"
 
 
 def test_all_shorthand(count, ayoc):
@@ -140,11 +140,11 @@ def test_all_shorthand(count, ayoc):
     async def main(run):
         run.all(foo(), foo(), foo())
 
-    assert count == 3
+    assert count == 3, "All coroutines have been called exactly once"
 
 
 def test_all_then_gather(count, ayoc):
-    """ scope.all is a shorthand for creating a scope and runninig things in it """
+    """ gather() can be used to get results before the end of the scope """
 
     async def foo(run):
         await run.sleep(0.1)
@@ -154,18 +154,39 @@ def test_all_then_gather(count, ayoc):
     @ayoc.run_with_main()
     async def main(run):
         tasks = run.all(foo(run), foo(run), foo(run))
-        assert count.value < 3
+        assert count.value < 3, "All coroutines should have not run yet"
         results = await tasks.gather()
-        assert isinstance(results, list)
-        assert len(results) == 3
-        assert all(results)
-        assert count.value == 3
+        assert isinstance(results, list), "We should get a list of result"
+        assert len(results) == 3, "We should get all 3 results"
+        assert all(results), "They all reached the return statement"
+        assert count.value == 3, "All coroutines have been called exactly once"
 
 
-# The lib provides other similar shortcuts:
+def test_cancel_scope(count, ayoc):
+    """ cancel() exit a scope and cancel all tasks in it """
 
-# - `ayo.map()`:
-# - `ayo.starmap()`
-# - `ayo.funcmap()`
-# - `ayo.starfuncmap()`
-# - `ayo.cancel()`
+    async def foo(run):
+        await run.sleep(3)
+        count()
+        return True
+
+    @ayoc.run_with_main()
+    async def main(run):
+        run << foo(run)
+
+        # TODO: check what happens if I cancel from the parent scope
+        # TODO: test stuff with the parent scope
+        async with ayo.scope() as runalso:
+            runalso.all(foo(runalso), foo(runalso), foo(runalso))
+            assert not runalso.cancelled
+            runalso.cancel()
+            assert False, "We should never reach this point"
+
+        assert not run.cancelled
+        assert runalso.cancelled
+        assert not count.value, "No coroutine has finished"
+
+    assert count.value == 1, "One coroutine only has finished"
+
+# TODO: TEST cancelling the top task to see if the bottom tasks are
+# cancelled

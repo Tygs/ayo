@@ -76,21 +76,14 @@ Any code *after* the `with` block is guaranteed to happend *only* after all the 
 
 ayo also comes with a lot of short hands. Here you can see `run << stuff()` which is just syntaxic sugar for `run.asap(stuff())`. And `run.asap(stuff())` is nothing more than a safer version of `asyncio.ensure_future(stuff())` restricted to the current scope.
 
-## Shorthands
-
 The running a bunch of task is a common case, and so we provide a shorter way to express it:
 
 ```python
 async with ayo.scope() as run:
     run.all(zzz(), zzz(), zzz())
 ```
-ayo provides other similar shorthands:
 
-- `.map()`: like `map()`, but with coroutines that you run in a scope
-- `.starmap()`: like `itertools.starmap()`, but with coroutines that you run in a scope
-- `.funcmap()`: like `.all(*(coro(param) for coro in coroutines))`
-- `.starfuncmap()`: like `.all(*(coro(*param) for coro in coroutines))`
-- `.cancel()`: cancel all tasks in the current scope.
+And you can cancel all tasks running this scope with by calling `run.cancel()`.
 
 Learn more in the dedicated part of the documentation.
 
