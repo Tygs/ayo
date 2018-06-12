@@ -29,6 +29,9 @@ class ExecutionScope:
         TIMEDOUT = 4
 
     def __init__(self, loop=None, timeout=None, return_exceptions=False):
+
+        assert timeout is None or timeout >= 0, "timeout must be > 0"
+
         # Parameters we will pass to gather()
         self._loop = loop
         self.return_exceptions = return_exceptions
@@ -88,7 +91,7 @@ class ExecutionScope:
         loop = self.loop or asyncio.get_event_loop()
         if awaitable in self.tasks_to_await:
             raise RuntimeError(
-                f"The awaitable 'awaitable' is already scheduled in this scope"
+                "The awaitable 'awaitable' is already scheduled in this scope"
             )
         task = cast(asyncio.Task, asyncio.ensure_future(awaitable, loop=loop))
         self.tasks_to_await[awaitable] = task

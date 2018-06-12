@@ -18,25 +18,25 @@ class AsynchronousExecutionContext:
     def __init__(self):
         self.main = None
 
-    def run_with_main(self) -> Callable:
+    def run_with_main(self, timeout=None) -> Callable:
         """ Run this function as the main entry point of the asyncio program """
 
         def decorator(main_func: Coroutine) -> Coroutine:
             """ Execute current context with the given coutine as the main function """
             self.main = main_func
-            self.run()
+            self.run(timeout=timeout)
             return main_func
 
         return decorator
 
-    def run(self) -> None:
+    def run(self, timeout=None) -> None:
         """ Start the event loop to execute the main function """
         # TODO: check that the patch has been done ?
         loop = asyncio.get_event_loop()
 
         async def main_wrapper():
             """ Wrap the main function in a scope and pass the scope to it """
-            async with ExecutionScope() as run:
+            async with ExecutionScope(timeout=timeout) as run:
                 run.asap(self.main(run))
 
         loop.run_until_complete(main_wrapper())

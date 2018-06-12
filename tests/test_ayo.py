@@ -213,6 +213,20 @@ def test_timeout_scope(count, ayoc):
 
     assert count.value == 4, "all coroutines has ran"
 
+    @ayoc.run_with_main(timeout=1)
+    async def main3(run):
+        async with ayo.scope() as runalso:
+            runalso.all(foo(0.5), foo(2), foo(3))
+
+    assert count.value == 5, "2 coroutines has been cancelled"
+
+    @ayoc.run_with_main(timeout=0.1)
+    async def main4(run):
+        async with ayo.scope() as runalso:
+            runalso.all(foo(0.5), foo(2), foo(3))
+
+    assert count.value == 5, "all coroutines has been cancelled"
+
 
 # TODO: TEST cancelling the top task to see if the bottom tasks are
 # cancelled
