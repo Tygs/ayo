@@ -6,6 +6,7 @@ Most basic tests for ayo
 
 
 import time
+import asyncio
 import itertools
 
 from typing import Callable
@@ -87,9 +88,9 @@ def test_ayo_sleep(timer, ayoc):
 
     @ayoc.run_with_main()
     async def main(run):
-        await run.sleep(3)
+        await asyncio.sleep(1)
 
-    assert timer.has_almost_elapsed(3), "Sleep does make the code wait"
+    assert timer.has_almost_elapsed(1), "Sleep does make the code wait"
 
 
 def test_forgetting_async_with_on_scope_raises_exception():
@@ -147,7 +148,7 @@ def test_all_then_gather(count, ayoc):
     """ gather() can be used to get results before the end of the scope """
 
     async def foo(run):
-        await run.sleep(0.1)
+        await asyncio.sleep(0.1)
         count()
         return True
 
@@ -166,7 +167,7 @@ def test_cancel_scope(count, ayoc):
     """ cancel() exit a scope and cancel all tasks in it """
 
     async def foo(run):
-        await run.sleep(3)
+        await asyncio.sleep(1)
         count()
         return True
 
@@ -189,7 +190,36 @@ def test_cancel_scope(count, ayoc):
     assert count.value == 1, "One coroutine only has finished"
 
 
+def test_timeout_scope(count, ayoc):
+    """setting a timeout limit the time it can execute in """
+
+    async def foo(s):
+        await asyncio.sleep(s)
+        count()
+        return True
+
+    # TODO: put timeout on run_with_main()
+    @ayoc.run_with_main()
+    async def main1(run):
+        async with ayo.scope(timeout=1) as runalso:
+            runalso.all(foo(0.5), foo(2), foo(3))
+
+    assert count.value == 1, "2 coroutines has been cancelled"
+
+    @ayoc.run_with_main()
+    async def main2(run):
+        async with ayo.scope(timeout=4) as runalso:
+            runalso.all(foo(0.5), foo(2), foo(3))
+
+    assert count.value == 4, "all coroutines has ran"
+
+
 # TODO: TEST cancelling the top task to see if the bottom tasks are
 # cancelled
 
 # TODO: test assertions preventing missuse of scopes
+
+# TODO: make shield work ?
+# TODO: check passing a custom loop
+
+# TODO: replace main() with on.start

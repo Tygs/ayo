@@ -33,8 +33,6 @@
     - Licence : MIT
     - Source code : `git clone http://github.com/tygs/ayo`
 """
-
-
 from ayo.scope import ExecutionScope as scope
 from ayo.context import context
 

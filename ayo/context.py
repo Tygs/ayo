@@ -8,6 +8,8 @@ from typing import Callable, Coroutine
 
 from ayo.scope import ScopedTaskFactory, ExecutionScope
 
+__all__ = ["AsynchronousExecutionContext", "context"]
+
 
 # TODO: find a better name
 class AsynchronousExecutionContext:
