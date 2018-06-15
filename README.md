@@ -1,6 +1,6 @@
 # WARNING
 
-This project is empty. Don't try it
+While most of the examples work and are unit tested, the API is still moving a lot and we have zero doc. Don't spend too much time on here.
 
 
 # ayo: High level API for asyncio that integrates well with non ayo code
