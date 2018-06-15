@@ -33,11 +33,9 @@
     - Licence : MIT
     - Source code : `git clone http://github.com/tygs/ayo`
 """
-from ayo.scope import ExecutionScope as scope
-from ayo.context import context
-
-# from ayo.utils import gather
+from .scope import ExecutionScope as scope
+from .utils import run_as_main, run, pass_scope_and_run
 
 __version__ = "0.1.0"
 
-__all__ = ["context", "scope"]
+__all__ = ["scope", "run_as_main", "run", "pass_scope_and_run"]

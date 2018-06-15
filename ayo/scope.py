@@ -3,20 +3,20 @@
     "Scope"
 """
 
-
-import threading
-
 import asyncio
 
+from asyncio import ensure_future, Future, Task
+
+from collections import deque
 from itertools import chain
 from enum import Enum
 
-from typing import Awaitable, cast
+from typing import Awaitable, Union
 
-from ayo.utils import TaskList
+from ayo.utils import FutureList, AsyncOnlyContextManager, LazyTask
 
 
-class ExecutionScope:
+class ExecutionScope(AsyncOnlyContextManager):
     """ Attempt at recreating trio.nursery for asyncio """
 
     class STATE(Enum):
@@ -28,7 +28,10 @@ class ExecutionScope:
         CANCELLED = 3
         TIMEDOUT = 4
 
-    def __init__(self, loop=None, timeout=None, return_exceptions=False):
+    # pylint: disable=too-many-instance-attributes
+    def __init__(
+        self, loop=None, timeout=None, max_concurrency=None, return_exceptions=False
+    ):
 
         assert timeout is None or timeout >= 0, "timeout must be > 0"
 
@@ -36,13 +39,23 @@ class ExecutionScope:
         self._loop = loop
         self.return_exceptions = return_exceptions
 
-        # All the awaitables we will await in gather()
-        self.tasks_to_await = {}
-        self.awaited_tasks = set()
+        # All the awaitables we process on scope r
+        self._lazy_task_queue = deque()
+        self._scheduled_tasks_queue = deque()
+        self._awaited_tasks = deque()
 
-        # We use that to promote the parent scope as the current scope
-        # in resolve()
-        self._parent_scope = None
+        # Results of all awaited tasks
+        self.results = []
+
+        # How many tasks can run at the same time in the scope
+        self.max_concurrency = max_concurrency
+        # No need to make this check if no concurrency limit
+        if max_concurrency is None:
+            self._can_schedule_task = lambda: True
+        else:
+            self._can_schedule_task = (
+                lambda: len(self._scheduled_tasks_queue) < self.max_concurrency
+            )
 
         # Make sure we use the scope in the proper order of states
         self.state = self.STATE.INIT
@@ -71,43 +84,60 @@ class ExecutionScope:
 
         return exc_type == asyncio.CancelledError
 
-    def __enter__(self):
-        raise TypeError('You must use "async with" on scopes, not just "with"')
-
-    def __exit__(self, exc_type, exc, tb):
-        raise TypeError('You muse use "__aexit__" on scope instead of "__exit__"')
-
     def __lshift__(self, coro):
         """ Shortcut for self.assap """
         return self.asap(coro)
 
-    @property
-    def loop(self):
-        """ Return the internal loop or the current one """
-        return self._loop or asyncio.get_event_loop()
-
-    def asap(self, awaitable: Awaitable) -> asyncio.Task:
+    def asap(self, awaitable: Awaitable) -> Union[Task, LazyTask, Future]:
         """ Execute the awaitable in the current scope as soon as possible """
-        loop = self.loop or asyncio.get_event_loop()
-        if awaitable in self.tasks_to_await:
-            raise RuntimeError(
-                "The awaitable 'awaitable' is already scheduled in this scope"
-            )
-        task = cast(asyncio.Task, asyncio.ensure_future(awaitable, loop=loop))
-        self.tasks_to_await[awaitable] = task
+
+        loop = self._loop or asyncio.get_event_loop()
+
+        if self.max_concurrency:
+
+            if self._can_schedule_task():
+                # Schedule the task for execution in the event loop
+                task = ensure_future(awaitable, loop=loop)
+                self._scheduled_tasks_queue.append(task)
+            else:
+                # This is the only future that is not a task. This way
+                # it's not scheduling the awaitable on the event loop
+                task = LazyTask(awaitable, loop=self._loop)
+
+                # This future is in self._scheduled_tasks_queue. so that
+                # it is awaited at the scope resolution.
+                self._scheduled_tasks_queue.append(task)
+
+                # We then put the future in the
+                self._lazy_task_queue.append(task)
+
+            # When the task is done, we want to be sure it schedule for
+            # for execution in the loop the next task in the queue
+            task.add_done_callback(self._schedule_next_task)
+            return task
+
+        task = ensure_future(awaitable, loop=loop)
+        self._scheduled_tasks_queue.append(task)
         return task
 
-    def all(self, *awaitables) -> TaskList:
+    def _schedule_next_task(
+        self, future: asyncio.Future = None  # pylint: disable=W0613
+    ) -> None:
+        """ Schedule the next Lazy tasks from the queue for execution """
+        if self._lazy_task_queue:
+            # TODO: document the fact max_concurrency is not recursive
+            # TODO: affer an alternative scope design that allow recursive
+            # max concurrency ?
+            self._lazy_task_queue.popleft().schedule_for_execution()
+
+    def all(self, *awaitables) -> FutureList:
         """ Schedule all tasks to be run in the current scope"""
-        return TaskList(self.asap(awaitable) for awaitable in awaitables)
+        return FutureList(self.asap(awaitable) for awaitable in awaitables)
 
     async def enter(self):
         """ Set itself as the current scope """
         assert self.state == self.STATE.INIT, "You can't enter a scope twice"
         # TODO: in debug mode only:
-        loop = self.loop
-        factory = loop.get_task_factory()
-        factory.set_current_scope(self)
         self.state = self.STATE.ENTERED
 
         # Cancel all tasks in case of a timeout
@@ -120,30 +150,23 @@ class ExecutionScope:
         """ Await all awaitables created in the scope or cancel them all  """
         assert self.state == self.STATE.ENTERED, "You can't exit a scope you are not in"
 
-        if not self.tasks_to_await:
+        if not self._scheduled_tasks_queue:
             self.cancel_timeout()
             return
 
         # Await all submitted tasks. The tasks may themself submit more
         # task, so we do it in a loop to exhaust all potential nested tasks
-        while self.tasks_to_await:
+        while self._scheduled_tasks_queue:
             # TODO: collecting results
-            self.awaited_tasks.update(self.tasks_to_await.values())
+            tasks_to_run = tuple(self._scheduled_tasks_queue)
+            self._scheduled_tasks_queue.clear()
             tasks = asyncio.gather(
-                *self.tasks_to_await.values(),
-                loop=self._loop,
-                return_exceptions=self.return_exceptions,
+                *tasks_to_run, loop=self._loop, return_exceptions=self.return_exceptions
             )
-            # We empty the dict of tasks to await after gather() has a
-            # reference on them otherwise it will have nothing to work on.
-            # But we empty it before we await the gaher(), since gather()
-            # may put new tasks in it.
-            self.tasks_to_await.clear()
-            await tasks
+            self._awaited_tasks.extend(tasks_to_run)
+            self.results.extend(await tasks)
 
         self.cancel_timeout()
-        # TODO: in debug mode only
-        self._restore_parent_scope()
 
         self.state = self.STATE.EXITED
 
@@ -156,27 +179,6 @@ class ExecutionScope:
         """ Disable the timeout """
         if self._timeout_handler:
             self._timeout_handler.cancel()
-
-    def _cancel_scope(self):
-        assert (
-            self.state == self.STATE.ENTERED
-        ), "You can't cancel a scope you are not in"
-
-        self.cancel_timeout()
-
-        # TODO: in debug mode only
-        self._restore_parent_scope()
-        for awaitable in chain(self.tasks_to_await.values(), self.awaited_tasks):
-            awaitable.cancel()
-        self.state = self.STATE.CANCELLED
-
-    def _restore_parent_scope(self):
-        """ Restaure the parent scope as the current scope.
-
-            It may be None, in which case we are out of all scopes.
-        """
-        factory = self.loop.get_task_factory()
-        factory.set_current_scope(self._parent_scope)
 
     def cancel(self):
         """ Exit the scope `with` block, cancelling all the tasks
@@ -195,48 +197,13 @@ class ExecutionScope:
         """ Has the scope being cancelled """
         return self.state.value >= self.STATE.CANCELLED.value
 
+    def _cancel_scope(self):
+        assert (
+            self.state == self.STATE.ENTERED
+        ), "You can't cancel a scope you are not in"
 
-class ScopedTaskFactory:  # pylint: disable=too-few-public-methods
-    """ TaskFactory that ensure created tasks are attached to the scope """
+        self.cancel_timeout()
 
-    def __init__(self):
-        self.thread_locals = threading.local()
-
-    def get_current_scope(self) -> ExecutionScope:
-        """ Get the current scope for the running thread """
-        return getattr(self.thread_locals, "ayo_execution_scope", None)
-
-    def set_current_scope(self, scope: ExecutionScope) -> ExecutionScope:
-        """ Set the current scope for the running thread """
-        self.thread_locals.ayo_execution_scope = scope
-        return scope
-
-    def __call__(self, loop, coro) -> asyncio.Task:
-        """ Create a Task from the coroutine, then attach it to the current scope
-
-            This allows the scope to still track tasks not created
-            using it's infrastructure. E.G: if the user calls
-            asyncio.ensure_future(coro) and never scope.run().
-
-            This uses thread_local to get the current scope for the running
-            thread.
-        """
-        # pylint: disable=W0212
-        task = asyncio.Task(coro, loop=loop)
-        if task._source_traceback:  # type: ignore
-            del task._source_traceback[-1]  # type: ignore
-
-        # scope = self.get_current_scope()
-        # TODO: task tracking to warn if we ensure_future() without
-        # a scope
-        # TODO: capture_orphan_tasks option on scope
-        # if scope:
-        #     # Maybe add a warning here if coro not in the dict already ?
-        #     scope.tasks_to_await[coro] = task
-        return task
-
-
-def get_current_scope(loop=None) -> ExecutionScope:
-    """ Return the current scope for the running event loop """
-    loop = loop or asyncio.get_event_loop()
-    return loop.get_task_factory().get_current_scope()
+        for awaitable in chain(self._scheduled_tasks_queue, self._awaited_tasks):
+            awaitable.cancel()
+        self.state = self.STATE.CANCELLED

@@ -10,17 +10,16 @@ Ayo let you focus on using asyncio instead of dealing with it. It has shortcuts 
 Among the features:
 
 - Minimal boiler plate setup
-- A port of Trio's nurseries, including cancellation
+- A port of Trio's nurseries, including cancellation. We called them `execution scopes` here.
 - Syntaxic sugar for common operations
 - Easy time out
 - Easy concurrency limit
 - Well behaved scheduled tasks
-- A proposed structure for your asyncio code
-- Mechanism to react to code changing the loop or loop policy
+- Mechanism to react to react to changing the loop, the loop policy or the task factory
 
-Each feature is optional but on by default and always at reach near you need them.
+Each feature is optional but on by default and always at reach when you need them.
 
-ayo does **not** provide a different async system. It embraces asyncio, so you can use ayo with other asyncio using code.
+ayo does **not** provide a different async system. It embraces asyncio, so you can use ayo insided or above other codes that use asyncio. It's completly compatible with asyncio and requires zero rewrite or lock in.
 
 ayo is **not** a framework. It only makes asyncio easier and safer to use. It does nothing else.
 
@@ -37,15 +36,13 @@ ayo is **not** a framework. It only makes asyncio easier and safer to use. It do
 ```python
 import ayo
 
-ayoc = ayo.context()
-
-@ayoc.run_with_main()
+@ayo.run_as_main()
 async def main(run):
     await run.sleep(3)
     print('Hello !')
 ```
 
-`run` here, is the root scope of your program. It's what set the boundaries in which your tasks can execute safely. You can create and nest as many scopes as you need.
+`run` here, is the root execution scope of your program. It's what set the boundaries in which your tasks can execute safely: tasks you run inside the scope are guaranteed to be done outside of the scope. You can create and nest as many scopes as you need.
 
 To learn about how this works, follow the tutorial.
 
@@ -92,9 +89,7 @@ Learn more in the dedicated part of the documentation.
 ```python
 import ayo
 
-ayoc = ayo.context()
-
-@ayoc.run_with_main()
+@ayo.run_as_main()
 async def main(run_in_top):
 
     print('Top of the program')
@@ -201,8 +196,6 @@ Most asyncio code hook on the currently running loop, and so can be used as is. 
 
 import ayo
 
-ayoc = ayo.context()
-
 URLS = [
     "https://www.python.org/",
     "https://pypi.python.org/",
@@ -214,7 +207,7 @@ async def fetch(url):
     async with aiohttp.request('GET', 'http://python.org/') as resp:
         print(url, "content size:", len(await response.text()))
 
-@ayoc.run_with_main()
+@ayo.run_as_main()
 async def main(run):
     # Just run your coroutine in the scope and you are good to go
     for url in URLS:
@@ -235,26 +228,18 @@ import asyncio
 
 import ayo
 
-ayoc = ayo.context()
-
-@ayoc.with_main()
-async def main(run):
-    await run.sleep(3)
-    print('Hello !')
+async def main():
+    with ayo.scope as run():
+        await run.sleep(3)
+        print('Hello !')
 
 loop = asyncio.get_event_loop()
 loop.run_until_complete(main())
 ```
 
-The `ayoc` context is an awaitable that can be used where you usually pass a coroutine. You can even pass it to `ensure_future()`. Note that if you use `run_forever()`, then exceptions will not halt the program, which can make it harder to debug.
-
-Remember that anything that is execute outside of the ayo context `main()` cannot benefit from any ayo tools : no helpers, no scope, no timeout, no cancellation, and no clear boundaries to limit task execution. You loose all guaranties ayo offers and go back to manually dealing with all asyncio edge cases.
+`ayo` doesn't need a main function to run, it's just a convenient wrapper. It also ensure all your code run in a scope, while you do not have this guaranty if you do everything manuelly.
 
 To learn more about the tradeoff, read the dedicated part of the documentation.
-
-**Be careful!**
-
-ayo monkey patch `asyncio.set_event_policy()`. It also installs a custom event loop policy, a custom loop and a custom `task factory`. Here we do it  `ayo.context()`. You usually don't need to know about this, or care. But if you try to do something complicated, or use a library that does, read the dedicated part of the documentation.
 
 ### React to life cycle hooks
 
@@ -294,48 +279,6 @@ By default ayo hooks to some of those, in particular to raise some warnings or e
 You can disable globally or selectively any hook.
 
 To learn more about life cycle hooks, read the dedicated part of the documentation.
-
-### Pluggable code
-
-ayo suggest a certain structure to your code by enforcing the `main()` function as a single entry point, and requiring a waterfall workflow for your tasks by nesting scopes.
-
-Just like you should construct a hierarchy of scopes (and actually, all scopes have helpers to access their children and parent), you may contruct a hierarchy of contexts. A context is just a bag of code with some information, that you attach later to an event loop, but it can exist without an event loop.
-
-If you want to make a reusable bag of code, just use a context:
-
-```python
-
-import ayo
-
-reusable_code = ayo.context()
-
-@reusable_code.with_main()
-async def main(run):
-    await run.sleep(3)
-    print('Hello !')
-
-```
-
-You can plug it later under any other context:
-
-```python
-
-import ayo
-
-from reusable_module import reusable_code
-
-ayoc = ayo.context()
-
-ayoc.attach(reusable_code)
-
-@ayoc.run_with_main()
-async def main(run):
-    # do whatever you want
-```
-
-This will start the `reusable_code` `main()` in function as soon as `aoyc` own `main()` has started and pass it the same scope.
-
-Learn more about writting pluggable code in the dedicated part of the documentation.
 
 # TODO
 

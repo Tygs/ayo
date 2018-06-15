@@ -134,7 +134,12 @@ disable=print-statement,
         deprecated-sys-function,
         exception-escape,
         comprehension-escape,
-        expression-not-assigned
+        expression-not-assigned,
+
+        # custo
+        bad-continuation,
+        C0326,
+        C0330
 
 # Enable the message, report, category or checker with the given id(s). You can
 # either give multiple identifier separated by comma (,) or put this option
