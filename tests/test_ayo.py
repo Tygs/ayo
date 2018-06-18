@@ -18,7 +18,7 @@ import pytest
 import ayo
 
 from ayo.scope import ExecutionScope
-from ayo.utils import ensure_future, LazyTask
+from ayo.utils import LazyTask
 
 
 class Timer:
@@ -55,7 +55,9 @@ class ExecutionCounter:
         """
         if mark is not None:
             if mark in self.marks:
-                raise ValueError(f"The mark '{mark}' has already been used")
+                raise ValueError(
+                    "The mark '{mark}' has already been used".format(mark=mark)
+                )
             self.marks.add(mark)
         self.value = next(self.count)
         return self.value
@@ -165,6 +167,7 @@ def test_all_then_gather(count):
         results = await tasks.gather()
         assert sorted(results) == [1, 2, 3]
 
+
 # TODO: test what happen if we cancel a task before inserting it in asyncio
 def test_cancel_scope(count):
     """ cancel() exit a scope and cancel all tasks in it """
@@ -249,13 +252,12 @@ def test_all_scope_results(count):
 
         assert sorted(run.results) == [1, 2, 3]
 
+
 def test_delayed_task_execution(count):
     """ Using a lazy task allow later schedule execution """
 
     async def foo(mark):
         return count(mark)
-
-    task = None
 
     @ayo.run_as_main()
     async def main2(s):
@@ -268,6 +270,7 @@ def test_delayed_task_execution(count):
         count()
 
     assert count.value == 2
+
 
 def test_max_concurrency(count):
     """setting a timeout limit the time it can execute in """
@@ -304,6 +307,7 @@ def test_max_concurrency(count):
 
         assert diff_in_seconds(c, b) == 0.1
         assert diff_in_seconds(d, e) == 0.1
+
 
 # TODO: test concurrency with aside
 

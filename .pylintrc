@@ -138,6 +138,7 @@ disable=print-statement,
 
         # custo
         bad-continuation,
+        inconsistent-return-statements,
         C0326,
         C0330
 

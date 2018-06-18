@@ -19,6 +19,8 @@ from ayo.utils import FutureList, AsyncOnlyContextManager, LazyTask
 class ExecutionScope(AsyncOnlyContextManager):
     """ Attempt at recreating trio.nursery for asyncio """
 
+    # pylint: disable=too-many-instance-attributes
+
     class STATE(Enum):
         """ Scope life cycle """
 
@@ -28,7 +30,6 @@ class ExecutionScope(AsyncOnlyContextManager):
         CANCELLED = 3
         TIMEDOUT = 4
 
-    # pylint: disable=too-many-instance-attributes
     def __init__(
         self, loop=None, timeout=None, max_concurrency=None, return_exceptions=False
     ):

@@ -82,7 +82,7 @@ def pass_scope_and_run(
     timeout: Union[int, float] = None,
     max_concurrency: int = None,
     loop: AbstractEventLoop = None,
-    return_coroutine: bool = False,
+    return_coroutine: bool = False
 ) -> None:
     """Start the loop and execute the coros in a scope. Pass them the scope ref"""
 
