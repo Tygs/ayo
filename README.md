@@ -186,6 +186,45 @@ async with ayo.scope() as run:
     run.every(0.2, callback, foo, bar=1).dont_hold_exit()
 ```
 
+## Saving RAM
+
+If you use `max_concurrency` with a low value but attach a lot of coroutines to your scope, you will have many coroutines objects eating up RAM but not actually being scheduled.
+
+For this particular case, if you want to save up memory, you can use `Scope.from_callable()`:
+
+
+```python
+
+import random
+import asyncio
+
+async def zzz(seconds):
+    await asyncio.sleep(seconds)
+    print(f'Slept for {time} seconds')
+
+async with ayo.scope(max_concurrency=10) as run:
+    # A lot of things in the waiting queue, but only 10 can execute at the
+    # same time, so most of them do nothing and eat up memory.
+    for _ in range(10000):
+        # Pass a callable here (e.g: function), not an awaitable (e.g: coroutine)
+        # So do:
+        run.from_callable(zzz, 0.01)
+        # But NOT:
+        # run.from_callable(zzz(0.01))
+```
+
+The callable must always return an awaitable. Any `async def` function reference will hence naturally be accepted.
+
+`run.from_callable()` will store the reference of the callable and its parameters, and only call it to get the awaitable at the very last moment. If you use a lot of similar combinaisons of
+callables and parameters, this will store only references to them instead of a new coroutine object
+everytime. This can add up to a lot of memory.
+
+This feature is mostly for this specific case, and you should not bother with it unless you
+are in this exact situation.
+
+Another use case would be if you want to dynamically create the awaitable at the last minute from a
+factory.
+
 ## Playing well with others
 
 ### Just do as usual for simple cases

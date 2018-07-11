@@ -5,15 +5,15 @@
 
 import asyncio
 
-from asyncio import ensure_future, Future, Task
+from asyncio import ensure_future, Future
 
 from collections import deque
 from itertools import chain
 from enum import Enum
 
-from typing import Awaitable, Union
+from typing import Awaitable, Union, Callable
 
-from ayo.utils import FutureList, AsyncOnlyContextManager, LazyTask
+from ayo.utils import FutureList, AsyncOnlyContextManager, LazyTask, LazyTaskFactory
 
 
 class ExecutionScope(AsyncOnlyContextManager):
@@ -89,7 +89,7 @@ class ExecutionScope(AsyncOnlyContextManager):
         """ Shortcut for self.assap """
         return self.asap(coro)
 
-    def asap(self, awaitable: Awaitable) -> Union[Task, LazyTask, Future]:
+    def asap(self, awaitable: Awaitable) -> Union[LazyTask, Future]:
         """ Execute the awaitable in the current scope as soon as possible """
 
         loop = self._loop or asyncio.get_event_loop()
@@ -101,25 +101,59 @@ class ExecutionScope(AsyncOnlyContextManager):
                 task = ensure_future(awaitable, loop=loop)
                 self._scheduled_tasks_queue.append(task)
             else:
-                # This is the only future that is not a task. This way
+                # This is a future that is not a task. This way
                 # it's not scheduling the awaitable on the event loop
-                task = LazyTask(awaitable, loop=self._loop)
+                task = LazyTask(awaitable, loop=loop)
 
-                # This future is in self._scheduled_tasks_queue. so that
+                # This future is in self._scheduled_tasks_queue anyway. So that
                 # it is awaited at the scope resolution.
                 self._scheduled_tasks_queue.append(task)
 
-                # We then put the future in the
+                # We then put the future in the another specific queue
+                # that we will empty when the number of running concurrent
+                # tasks goes below the max concurrency
                 self._lazy_task_queue.append(task)
 
-            # When the task is done, we want to be sure it schedule for
-            # for execution in the loop the next task in the queue
+            # When the task is done, we want to be sure it schedules
+            # the next task in the queue for execution in the loop
             task.add_done_callback(self._schedule_next_task)
             return task
 
         task = ensure_future(awaitable, loop=loop)
         self._scheduled_tasks_queue.append(task)
         return task
+
+    def from_callable(
+        self, factory: Callable[..., Awaitable], *args
+    ) -> Union[LazyTaskFactory, Future]:
+        """ Like asap(), but we accept a callable that will return the awaitable
+
+            This can be used to save memory in case you have a lot of tasks using the
+            same function and most are not scheduled for execution.
+        """
+
+        # If the task is not scheduled immediatly, then we just store
+        # the factory and it's args. The awaitable will created and passed
+        # to a task at the last minute, which will save memory if
+        # a lot of things are in the waiting queue and not scheduled.
+        if self.max_concurrency and not self._can_schedule_task():
+
+            loop = self._loop or asyncio.get_event_loop()
+
+            # Like a the LazyTask in asap(), but we pass what's needed to
+            # build the awaitable at the last minute instead of the awaitable
+            # itself
+            task = LazyTaskFactory(factory, *args, loop=loop)
+
+            # For the rest it's just like asap()
+            self._scheduled_tasks_queue.append(task)
+            self._lazy_task_queue.append(task)
+            task.add_done_callback(self._schedule_next_task)
+            return task
+
+        # If there is no max_concurrency, we schedule the execution immidiatly
+        # so it's like a regular asap() call
+        return self.asap(factory(*args))
 
     def _schedule_next_task(
         self, future: asyncio.Future = None  # pylint: disable=W0613

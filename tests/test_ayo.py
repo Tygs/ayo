@@ -272,6 +272,20 @@ def test_delayed_task_execution(count):
     assert count.value == 2
 
 
+def test_from_callable(count):
+    """ from_callable() creates the awaitable and schedules it the scope """
+
+    async def foo(mark):
+        count(mark)
+
+    @ayo.run_as_main()
+    async def main(run):
+        run.from_callable(foo, 1)
+        run.from_callable(foo, 2)
+
+    assert count == 2, "All coroutines have been called exactly once"
+
+
 def test_max_concurrency(count):
     """setting a timeout limit the time it can execute in """
 
@@ -301,6 +315,24 @@ def test_max_concurrency(count):
         results = run.all(foo(), foo(), foo(), foo(), foo(), foo()).gather()
         a, b, c, d, e, f = await results
 
+        assert diff_in_seconds(a, b) == 0.0
+        assert diff_in_seconds(c, d) == 0.0
+        assert diff_in_seconds(e, f) == 0.0
+
+        assert diff_in_seconds(c, b) == 0.1
+        assert diff_in_seconds(d, e) == 0.1
+
+    @ayo.run_as_main()
+    async def main3(run):
+        async with ayo.scope(max_concurrency=2) as runalso:
+            runalso.from_callable(foo)
+            runalso.from_callable(foo)
+            runalso.from_callable(foo)
+            runalso.from_callable(foo)
+            runalso.from_callable(foo)
+            runalso.from_callable(foo)
+
+        a, b, c, d, e, f = runalso.results
         assert diff_in_seconds(a, b) == 0.0
         assert diff_in_seconds(c, d) == 0.0
         assert diff_in_seconds(e, f) == 0.0

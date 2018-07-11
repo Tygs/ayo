@@ -102,19 +102,21 @@ def pass_scope_and_run(
 
 
 class LazyTask(Future):
-    """ A future linked to a unscheduled coroutine, that can be scheduled later """
+    """ A future linked to a unscheduled awaitable, that can be scheduled later """
 
     def __init__(self, awaitable, *, loop=None):
         super().__init__(loop=loop)
         self._awaitable = awaitable
 
-    def schedule_for_execution(self):
+    def schedule_for_execution(self, awaitable: Awaitable = None) -> Future:
         """ Create a task from the awaitable
 
             Link the task resolution to the future resolution
         """
-        task = ensure_future(self._awaitable, loop=self._loop)
-        task.add_done_callback(self._task_done_callback)
+        task = ensure_future(
+            awaitable or self._awaitable, loop=self._loop  # type: ignore
+        )
+        task.add_done_callback(self._task_done_callback)  # type: ignore
         return task
 
     def _task_done_callback(self, task: Task) -> None:
@@ -123,3 +125,20 @@ class LazyTask(Future):
             self.set_result(task.result())
         except asyncio.CancelledError:
             self.cancel()
+
+
+class LazyTaskFactory(LazyTask):
+    """ A future linked to a factory, creating an awaitable we schedule later """
+
+    def __init__(self, factory, *args, loop=None):  # pylint: disable=W0231
+        Future.__init__(self, loop=loop)  # pylint: disable=W0233
+        self._factory = factory
+        self._args = args
+
+    # pylint: disable=W0221
+    def schedule_for_execution(self) -> Future:  # type: ignore
+        """ Create an awaitable from the factory, then a task from the awaitable
+
+            Link the task resolution to the future resolution
+        """
+        return super().schedule_for_execution(self._factory(*self._args))
