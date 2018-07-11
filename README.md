@@ -57,6 +57,8 @@ Execution scopes are a tool to give you garanties about you concurrent tasks:
 import random
 import asyncio
 
+import ayo
+
 async def zzz():
     time = random.randint(0, 15)
     await asyncio.sleep(time)
@@ -152,9 +154,12 @@ Learn more about handling blocking code in the dedicated part of the documentati
 
 ```python
 
+import ayo
+
 import datetime as dt
 
-async with ayo.scope() as run:
+@ayo.run_as_main()
+async def main(run):
     run.after(2, callback, foo, bar=1)
     run.at(dt.datetime(2018, 12, 1), callback, foo, bar=1)
     run.every(0.2, callback, foo, bar=1)
@@ -178,9 +183,12 @@ If it's a problem, use `dont_hold_exit()`:
 
 ```python
 
+import ayo
+
 import datetime as dt
 
-async with ayo.scope() as run:
+@ayo.run_as_main()
+async def main(run):
     run.after(2, callback, foo, bar=1).dont_hold_exit()
     run.at(dt.datetime(2018, 12, 1), callback, foo, bar=1).dont_hold_exit()
     run.every(0.2, callback, foo, bar=1).dont_hold_exit()
@@ -194,23 +202,26 @@ For this particular case, if you want to save up memory, you can use `Scope.from
 
 
 ```python
-
-import random
 import asyncio
+
+import ayo
 
 async def zzz(seconds):
     await asyncio.sleep(seconds)
-    print(f'Slept for {time} seconds')
+    print(f'Slept for {seconds} seconds')
 
-async with ayo.scope(max_concurrency=10) as run:
-    # A lot of things in the waiting queue, but only 10 can execute at the
-    # same time, so most of them do nothing and eat up memory.
-    for _ in range(10000):
-        # Pass a callable here (e.g: function), not an awaitable (e.g: coroutine)
-        # So do:
-        run.from_callable(zzz, 0.01)
-        # But NOT:
-        # run.from_callable(zzz(0.01))
+@ayo.run_as_main()
+async def main(run_in_top):
+
+    async with ayo.scope(max_concurrency=10) as run:
+        # A lot of things in the waiting queue, but only 10 can execute at the
+        # same time, so most of them do nothing and eat up memory.
+        for _ in range(10000):
+            # Pass a callable here (e.g: function), not an awaitable (e.g: coroutine)
+            # So do:
+            run.from_callable(zzz, 0.01)
+            # But NOT:
+            # run.from_callable(zzz(0.01))
 ```
 
 The callable must always return an awaitable. Any `async def` function reference will hence naturally be accepted.
@@ -234,6 +245,8 @@ Most asyncio code hook on the currently running loop, and so can be used as is. 
 ```python
 
 import ayo
+
+import aiohttp
 
 URLS = [
     "https://www.python.org/",
@@ -286,14 +299,14 @@ ayo provide several hooks on which you can plug your code to react to things lik
 
 ```python
 
-import ayo
+import asyncio
 
-ayoc = ayo.context()
+import ayo
 
 @ayoc.on.stopping()
 async def the_final_count_down(run):
     for x in (3, 2, 1):
-        ayoc.sleep(1)
+        asyncio.sleep(1)
         print(x)
     print('Good bye !')
 
