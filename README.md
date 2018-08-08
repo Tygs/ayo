@@ -5,7 +5,7 @@ While most of the examples work and are unit tested, the API is still moving a l
 
 # ayo: High level API for asyncio that integrates well with non ayo code
 
-Ayo let you focus on using asyncio instead of dealing with it. It has shortcuts for common operations, and offer sane tools to do the complicated things. The default behavior is to do most boiler plate for you, but you can opt out of anything you want, and take back control, or delegate control to another code that doesn't use ayo.
+Ayo let you focus on using asyncio instead of dealing with it. It has shortcuts for common operations, and offer sane tools to do the complicated things. The default behavior is to do most of the boiler plate for you, but you can opt out of anything you want, and take back control, or delegate control to another code that doesn't use ayo.
 
 Among the features:
 
@@ -15,11 +15,16 @@ Among the features:
 - Easy time out
 - Easy concurrency limit
 - Well behaved scheduled tasks
-- Mechanism to react to react to changing the loop, the loop policy or the task factory
+
+Incomming:
+
+- Helpers to create cancallable callbacks when you run them in executors.
+- Mechanisms to react to changing the loop, the loop policy or the task factory. Or a locking mechanism in the future. Not sure yet.
+- Protocols that allow async/await.
 
 Each feature is optional but on by default and always at reach when you need them.
 
-ayo does **not** provide a different async system. It embraces asyncio, so you can use ayo insided or above other codes that use asyncio. It's completly compatible with asyncio and requires zero rewrite or lock in.
+ayo does **not** provide a different async system. It embraces asyncio, so you can use ayo inside or above other codes that use asyncio. It's completly compatible with asyncio and requires zero rewrite or lock in. You can mix ayo and pure asyncio code transparently.
 
 ayo is **not** a framework. It only makes asyncio easier and safer to use. It does nothing else.
 
@@ -128,11 +133,19 @@ This example illustrate the concepts, but can't be executed. For fully functiona
 
 ## Executing blocking code
 
+Some code will block the event loop for a long time, preventing your tasks to execute. This can happen if the code is doing very long heavy calculations, or wait for I/O without using asyncio.
+
+Such code may be doing file processing, database querying, using the urllib, smtp or requests modules, etc.
+
+In that case, you can put the blocking code in a function, and pass it to `aside()`:
+
 ```python
 ayo.aside(callback, foo, bar=1)
 ```
 
-This will call `callback(foo, bar=1)` in the default asyncio executor, which, if you haved changed done anything, will be a `ThreadPoolExcecutor`. It's similar to `asyncio.get_event_loop().run_in_executor(func, functools.partial(callback, foo, bar=1))`, but binds the task to the current scope.
+This will call `callback(foo, bar=1)` in the default asyncio executor, which, if you haved changed done anything, will be a `ThreadPoolExcecutor` with `(os.cpu_count() or 1) * 5` workers. It's similar to `asyncio.get_event_loop().run_in_executor(None, lambda: callback(foo, bar=1))`, but binds the task to the current scope like `asap()`.
+
+What this mean, is that the blocking code with not lock your event loop anymore.
 
 You can also choose a different executor doing:
 
@@ -149,6 +162,22 @@ ayo.aside_in('notifications', callback, foo, bar=1)
 Provided you created an executor named 'notifications' with ayo before that.
 
 Learn more about handling blocking code in the dedicated part of the documentation.
+
+**Be careful!**
+
+Tasks scheduled with `aside()` are NOT included in the limit of `max_concurrency`. Indeed, only tasks running in the event loop are limited by `max_concurrency`. Tasks scheduled by `aside()` and `aside_in()` are running in an executor.
+
+Executors are "objects executing things", so they potentially could do anything, but in practice, they are mainly doing either:
+
+- a thread pool
+- a process pool
+
+So your tasks will run in a separate thread or process. If they run in a thread, they won't block I/O, but will share the CPU ressources. If they run in another process, they may run on another CPU but will consume more memory and take longer to be sent back and forth.
+
+Concurrency in that case, is limited by the number of workers.
+
+If you just use `aside()`, it will use the default executor, and if you didn't setup anything, the default executor for the default asyncio loop is a thread pool with `(os.cpu_count() or 1) * 5` workers.
+
 
 ## Scheduled tasks
 
