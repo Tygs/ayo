@@ -40,10 +40,11 @@ ayo is **not** a framework. It only makes asyncio easier and safer to use. It do
 
 ```python
 import ayo
+import asyncio
 
 @ayo.run_as_main()
 async def main(run):
-    await run.sleep(3)
+    await asyncio.sleep(3)
     print('Hello !')
 ```
 
