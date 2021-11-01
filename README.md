@@ -1,3 +1,8 @@
+
+# USE ANYIO INSTEAD
+
+anyio has become the standard for those kind of things now, so I'm going to archive this project, and you should use anyio instead: http://anyio.readthedocs.io/
+
 # WARNING
 
 While most of the examples work and are unit tested, the API is still moving a lot and we have zero doc. Don't spend too much time on here.
